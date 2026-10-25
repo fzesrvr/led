@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12121a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>LED Controller</title>
+<style>
+  :root { --bg:#12121a; --card:#1c1c28; --text:#eef; --muted:#8a8aa0; --accent:#6c8cff; --danger:#ff5c6c; --ok:#4cd28a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Roboto,sans-serif; }
+  body { padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 24px); max-width:480px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 12px; }
+  .card { background:var(--card); border-radius:16px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; gap:10px; align-items:center; }
+  .row > * { flex:1; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:12px; padding:13px 16px; font-size:16px; font-weight:600; }
+  button.secondary { background:#2c2c3e; }
+  button.danger { background:var(--danger); }
+  button:disabled { opacity:.4; }
+  #status { font-size:14px; color:var(--muted); margin-top:10px; min-height:18px; }
+  #status.ok { color:var(--ok); }
+  #status.err { color:var(--danger); }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  select, input[type=number] { width:100%; background:#12121a; color:var(--text); border:1px solid #33334a; border-radius:10px; padding:11px; font-size:16px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; line-height:1.4; }
+  #wheelWrap { position:relative; width:min(82vw,340px); aspect-ratio:1; margin:6px auto 4px; touch-action:none; }
+  #wheel { width:100%; height:100%; border-radius:50%; display:block; touch-action:none; box-shadow:0 0 0 3px #2c2c3e; }
+  #marker { position:absolute; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%; border:3px solid #fff; box-shadow:0 0 0 2px #000a, 0 2px 8px #000a; pointer-events:none; }
+  input[type=range] { width:100%; height:36px; accent-color:var(--accent); }
+  .sliderHead { display:flex; justify-content:space-between; font-size:14px; color:var(--muted); }
+  .sliderHead b { color:var(--text); }
+  details summary { font-size:16px; font-weight:600; cursor:pointer; padding:2px 0; }
+  .swatch { width:100%; height:10px; border-radius:6px; margin-top:12px; }
+  #unsupported { display:none; background:#3a1f26; color:#ffb3bc; }
+</style>
+</head>
+<body>
+<h1>💡 LED Controller</h1>
+
+<div id="unsupported" class="card">
+  Web Bluetooth isn't available in this browser. On Android use <b>Chrome</b>. iPhones/iOS Safari don't support Web Bluetooth.
+</div>
+
+<div class="card">
+  <div class="row">
+    <button id="connectBtn">Connect</button>
+    <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+  </div>
+  <label style="display:flex;gap:8px;align-items:center;margin-top:12px">
+    <input type="checkbox" id="showAll" style="width:auto"> Show all Bluetooth devices (if yours doesn't appear)
+  </label>
+  <div id="status">Not connected</div>
+</div>
+
+<div class="card">
+  <div id="wheelWrap">
+    <canvas id="wheel"></canvas>
+    <div id="marker"></div>
+  </div>
+  <div class="swatch" id="swatch"></div>
+  <div class="sliderHead" style="margin-top:14px"><span>Saturation</span><b id="satVal">100%</b></div>
+  <input type="range" id="sat" min="0" max="100" value="100">
+  <div class="sliderHead"><span>Brightness</span><b id="briVal">50%</b></div>
+  <input type="range" id="bri" min="0" max="100" value="50">
+  <div class="row" style="margin-top:8px">
+    <button id="powerBtn">Turn off</button>
+  </div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>Strip settings</summary>
+    <label for="chip">LED type</label>
+    <select id="chip">
+      <option value="0">WS2812 / WS2812B / WS2813 / WS2815 / SK6812 (RGB, 800 kHz)</option>
+      <option value="1">WS2811 (400 kHz)</option>
+      <option value="2">SK6812 RGBW / WS2814 (4 channel, 800 kHz)</option>
+    </select>
+    <label for="order">Color order</label>
+    <select id="order">
+      <option value="0">GRB (most WS2812/WS2812B)</option>
+      <option value="1">RGB (many WS2811)</option>
+      <option value="2">BRG</option>
+      <option value="3">RBG</option>
+      <option value="4">GBR</option>
+      <option value="5">BGR</option>
+    </select>
+    <div class="hint">If the colors are swapped (e.g. red shows as green), try another color order. For RGBW strips only GRB (→ GRBW) and RGB (→ RGBW) apply.</div>
+    <label for="pin">Data pin (GPIO)</label>
+    <select id="pin"></select>
+    <label for="count">Number of LEDs</label>
+    <input type="number" id="count" min="1" max="1024" value="30" inputmode="numeric">
+    <div style="margin-top:14px"><button id="applyBtn" style="width:100%" disabled>Apply &amp; save to ESP32</button></div>
+    <div class="hint">Settings are stored on the ESP32 and restored on every power-up.</div>
+  </details>
+</div>
+
+<script>
+const SERVICE = 'a1b2c3d4-0001-4c0d-9e2a-5b7e1f00a001';
+const CMD     = 'a1b2c3d4-0001-4c0d-9e2a-5b7e1f00a002';
+const STATE   = 'a1b2c3d4-0001-4c0d-9e2a-5b7e1f00a003';
+
+const $ = id => document.getElementById(id);
+const wheel = $('wheel'), marker = $('marker');
+const st = { h:0, s:100, v:50, on:true };
+
+let device = null, server = null, cmdChar = null, stateChar = null;
+
+/* ---------- helpers ---------- */
+function hsv2rgb(h, s, v) {           // h 0-360, s/v 0-1
+  const f = n => { const k = (n + h/60) % 6; return v - v*s*Math.max(0, Math.min(k, 4-k, 1)); };
+  return [Math.round(f(5)*255), Math.round(f(3)*255), Math.round(f(1)*255)];
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function setStatus(msg, cls='') { const e = $('status'); e.textContent = msg; e.className = cls; }
+
+/* ---------- pin list (ESP32-C3 safe GPIOs) ---------- */
+[0,1,2,3,4,5,6,7,8,9,10,20,21].forEach(p => {
+  const o = document.createElement('option'); o.value = p; o.textContent = 'GPIO ' + p;
+  if (p === 4) o.selected = true; $('pin').appendChild(o);
+});
+
+/* ---------- color wheel ---------- */
+function drawWheel() {
+  const size = Math.round(wheel.clientWidth * (window.devicePixelRatio || 1));
+  if (!size) return;
+  wheel.width = wheel.height = size;
+  const ctx = wheel.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  const R = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x + 0.5 - R, dy = y + 0.5 - R, d = Math.hypot(dx, dy);
+      if (d <= R) {
+        const hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+        const [r, g, b] = hsv2rgb(hue, d / R, 1);
+        const i = (y * size + x) * 4;
+        img.data[i] = r; img.data[i+1] = g; img.data[i+2] = b; img.data[i+3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  updateUI();
+}
+
+function updateUI() {
+  const w = wheel.clientWidth, R = w / 2;
+  const ang = st.h * Math.PI / 180, d = st.s / 100 * R;
+  marker.style.left = (R + Math.cos(ang) * d) + 'px';
+  marker.style.top  = (R + Math.sin(ang) * d) + 'px';
+  const [r, g, b] = hsv2rgb(st.h, st.s / 100, 1);
+  marker.style.background = `rgb(${r},${g},${b})`;
+  const [pr, pg, pb] = hsv2rgb(st.h, st.s / 100, st.v / 100);
+  $('swatch').style.background = st.on ? `rgb(${pr},${pg},${pb})` : '#222';
+  $('sat').value = st.s; $('satVal').textContent = Math.round(st.s) + '%';
+  $('bri').value = st.v; $('briVal').textContent = Math.round(st.v) + '%';
+  $('powerBtn').textContent = st.on ? 'Turn off' : 'Turn on';
+}
+
+function pick(e) {
+  const rect = wheel.getBoundingClientRect(), R = rect.width / 2;
+  const dx = e.clientX - (rect.left + R), dy = e.clientY - (rect.top + R);
+  const d = Math.min(Math.hypot(dx, dy), R);
+  st.h = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360) % 360;
+  st.s = Math.round(d / R * 100);
+  if (!st.on) st.on = true;
+  updateUI(); sendColor();
+}
+let dragging = false;
+wheel.addEventListener('pointerdown', e => { dragging = true; wheel.setPointerCapture(e.pointerId); pick(e); });
+wheel.addEventListener('pointermove', e => { if (dragging) pick(e); });
+wheel.addEventListener('pointerup',   () => dragging = false);
+wheel.addEventListener('pointercancel', () => dragging = false);
+window.addEventListener('resize', drawWheel);
+
+$('sat').addEventListener('input', e => { st.s = +e.target.value; st.on = true; updateUI(); sendColor(); });
+$('bri').addEventListener('input', e => { st.v = +e.target.value; st.on = true; updateUI(); sendColor(); });
+$('powerBtn').addEventListener('click', () => { st.on = !st.on; updateUI(); sendColor(); });
+
+/* ---------- BLE send queue ---------- */
+let busy = false, queuedColor = null, queuedConfig = null;
+
+function sendColor() {
+  queuedColor = [0x01, st.h & 255, st.h >> 8, Math.round(st.s * 2.55), Math.round(st.v * 2.55), st.on ? 1 : 0];
+  pump();
+}
+async function pump() {
+  if (busy || !cmdChar) return;
+  busy = true;
+  try {
+    while (queuedConfig || queuedColor) {
+      if (queuedConfig) {
+        const b = queuedConfig; queuedConfig = null;
+        await cmdChar.writeValue(new Uint8Array(b));
+        await sleep(300);
+      } else {
+        const b = queuedColor; queuedColor = null;
+        const data = new Uint8Array(b);
+        if (cmdChar.writeValueWithoutResponse) await cmdChar.writeValueWithoutResponse(data);
+        else await cmdChar.writeValue(data);
+        await sleep(20);
+      }
+    }
+  } catch (err) {
+    setStatus('Send error: ' + err.message, 'err');
+  } finally { busy = false; }
+}
+
+$('applyBtn').addEventListener('click', () => {
+  const count = Math.max(1, Math.min(1024, parseInt($('count').value) || 1));
+  $('count').value = count;
+  queuedConfig = [0x02, +$('chip').value, +$('order').value, +$('pin').value, count & 255, count >> 8];
+  pump();
+  setStatus('Settings sent to ESP32', 'ok');
+});
+
+/* ---------- connection ---------- */
+function setConnectedUI(on) {
+  $('connectBtn').disabled = on;
+  $('disconnectBtn').disabled = !on;
+  $('applyBtn').disabled = !on;
+}
+
+async function connect() {
+  try {
+    const opts = $('showAll').checked
+      ? { acceptAllDevices: true, optionalServices: [SERVICE] }
+      : { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE] };
+    device = await navigator.bluetooth.requestDevice(opts);
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    await openGatt();
+  } catch (err) {
+    if (err.name !== 'NotFoundError') setStatus('Connection failed: ' + err.message, 'err');
+    else setStatus('No device selected');
+  }
+}
+
+async function openGatt() {
+  setStatus('Connecting…');
+  server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  cmdChar = await svc.getCharacteristic(CMD);
+  stateChar = await svc.getCharacteristic(STATE);
+  setConnectedUI(true);
+  setStatus('Connected to ' + (device.name || 'ESP32'), 'ok');
+  await loadState();
+}
+
+async function loadState() {
+  try {
+    const dv = await stateChar.readValue();
+    if (dv.byteLength >= 10) {
+      $('chip').value = dv.getUint8(0);
+      $('order').value = dv.getUint8(1);
+      $('pin').value = dv.getUint8(2);
+      $('count').value = dv.getUint8(3) | (dv.getUint8(4) << 8);
+      st.h = (dv.getUint8(5) | (dv.getUint8(6) << 8)) % 360;
+      st.s = Math.round(dv.getUint8(7) / 2.55);
+      st.v = Math.round(dv.getUint8(8) / 2.55);
+      st.on = !!dv.getUint8(9);
+      updateUI();
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+function onDisconnected() {
+  cmdChar = null; stateChar = null; busy = false;
+  setConnectedUI(false);
+  setStatus('Disconnected', 'err');
+}
+
+$('connectBtn').addEventListener('click', connect);
+$('disconnectBtn').addEventListener('click', () => { if (device && device.gatt.connected) device.gatt.disconnect(); });
+
+/* ---------- init ---------- */
+if (!navigator.bluetooth) { $('unsupported').style.display = 'block'; $('connectBtn').disabled = true; }
+drawWheel();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
